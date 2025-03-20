@@ -56,7 +56,7 @@ local function get_api_key()
     vim.notify("Devin API key not found. Use :DevinSetApiKey to set it directly", vim.log.levels.ERROR)
     return nil
   end
-  return api_key
+  return api_key .. "="
 end
 
 -- Function to create a new Devin session
@@ -96,6 +96,7 @@ function M.create_session(prompt, options)
   local masked_key = string.sub(api_key, 1, 6) .. "..." .. string.sub(api_key, -4)
   local masked_cmd = cmd:gsub(api_key, masked_key)
   vim.notify("Creating Devin session...", vim.log.levels.INFO)
+  vim.notify(cmd)
   
   -- Execute the command
   local handle = io.popen(cmd)
@@ -296,7 +297,7 @@ function M.set_api_key(key)
       "-d '{\"prompt\": \"test\", \"idempotent\": true}'",
       key
     )
-    
+    print(test_cmd)
     local handle = io.popen(test_cmd)
     local status = handle:read("*a")
     handle:close()
