@@ -20,27 +20,40 @@ M.config = {
 local function load_from_dotenv()
   local ok, dotenv = pcall(require, 'dotenv')
   if ok then
-    -- Try to load from specified path if available
-    if M.config.dotenv_path then
-      dotenv.load({path = M.config.dotenv_path})
+    -- Check if dotenv.load exists and is callable
+    if type(dotenv.load) == "function" then
+      -- Try to load from specified path if available
+      if M.config.dotenv_path then
+        pcall(dotenv.load, {path = M.config.dotenv_path})
+      else
+        -- Otherwise try default load
+        pcall(dotenv.load)
+      end
+      return true
     else
-      -- Otherwise try default load
-      dotenv.load()
+      -- Try newer API if available (some versions use setup instead of load)
+      if type(dotenv.setup) == "function" then
+        if M.config.dotenv_path then
+          pcall(dotenv.setup, {path = M.config.dotenv_path})
+        else
+          pcall(dotenv.setup)
+        end
+        return true
+      end
     end
-    return true
   end
   return false
 end
 
 -- Get API key from available sources
 local function get_api_key()
-  -- Try to load from dotenv first
-  load_from_dotenv()
+  -- Try to load from dotenv first, but don't fail if it doesn't work
+  pcall(load_from_dotenv)
   
   -- Check for API key in config, global variable, then environment variable
   local api_key = M.config.api_key or vim.g.devin_api_key or vim.fn.getenv("DEVIN_API_KEY")
   if api_key == "" or api_key == nil then
-    vim.notify("Devin API key not found. Set in setup config, vim.g.devin_api_key, or DEVIN_API_KEY environment variable", vim.log.levels.ERROR)
+    vim.notify("Devin API key not found. Use :DevinSetApiKey to set it directly", vim.log.levels.ERROR)
     return nil
   end
   return api_key
@@ -273,6 +286,27 @@ end
 function M.set_api_key(key)
   M.config.api_key = key
   vim.notify("API key updated", vim.log.levels.INFO)
+  
+  -- Test the API key immediately
+  vim.defer_fn(function()
+    local test_cmd = string.format(
+      "curl -s -o /dev/null -w '%%{http_code}' -X POST 'https://api.devin.ai/v1/sessions' " ..
+      "-H 'Authorization: Bearer %s' " ..
+      "-H 'Content-Type: application/json' " ..
+      "-d '{\"prompt\": \"test\", \"idempotent\": true}'",
+      key
+    )
+    
+    local handle = io.popen(test_cmd)
+    local status = handle:read("*a")
+    handle:close()
+    
+    if status == "200" or status == "201" then
+      vim.notify("API key verified and working", vim.log.levels.INFO)
+    else
+      vim.notify("API key appears invalid (HTTP status: " .. status .. ")", vim.log.levels.ERROR)
+    end
+  end, 100)
 end
 
 -- Function to set snapshot and playbook IDs
@@ -295,7 +329,20 @@ function M.setup(opts)
     vim.api.nvim_create_user_command(
       'DevinCreateSession',
       function(cmd_opts)
-        M.create_session(cmd_opts.args)
+        -- If API key isn't working, prompt the user to enter it directly
+        if not get_api_key() then
+          vim.ui.input({
+            prompt = "Enter Devin API Key: ",
+          }, function(input)
+            if input and input ~= "" then
+              M.config.api_key = input
+              vim.notify("Using provided API key for this command", vim.log.levels.INFO)
+              M.create_session(cmd_opts.args)
+            end
+          end)
+        else
+          M.create_session(cmd_opts.args)
+        end
       end,
       {
         nargs = '+',
